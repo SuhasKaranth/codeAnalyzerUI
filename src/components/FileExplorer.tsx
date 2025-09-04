@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { FileText, Folder, FolderOpen, Search } from 'lucide-react';
 import { FileExplorerProps, FileTreeNode } from '@/types';
 
@@ -9,6 +9,34 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
                                                        onExplainFile
                                                    }) => {
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+    const [treeHeight, setTreeHeight] = useState<number>(200);
+    const fileTreeRef = useRef<HTMLDivElement>(null);
+    const contentRef = useRef<HTMLDivElement>(null);
+
+    // Auto-scroll to right function
+    const autoScrollRight = useCallback(() => {
+        setTimeout(() => {
+            if (fileTreeRef.current) {
+                fileTreeRef.current.scrollLeft = fileTreeRef.current.scrollWidth;
+            }
+        }, 100);
+    }, []);
+
+    // Update height when expanded folders change
+    useEffect(() => {
+        if (contentRef.current) {
+            const contentHeight = contentRef.current.scrollHeight;
+            const newHeight = Math.min(contentHeight + 32, window.innerHeight * 0.6);
+            
+            // Only update if height actually changed to prevent infinite re-renders
+            setTreeHeight(prevHeight => {
+                if (Math.abs(prevHeight - newHeight) > 1) {
+                    return newHeight;
+                }
+                return prevHeight;
+            });
+        }
+    }, [expandedFolders, fileStructure]);
 
     // Toggle folder expansion
     const toggleFolder = (path: string) => {
@@ -21,6 +49,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
             }
             return newSet;
         });
+        autoScrollRight();
     };
 
     // Render file tree recursively
@@ -36,10 +65,13 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
                         className={`flex items-center py-1 px-2 cursor-pointer hover:bg-blue-50 rounded text-sm transition-colors ${
                             selectedFile === value.fullPath ? 'bg-blue-100 border-l-2 border-blue-500' : ''
                         }`}
-                        onClick={() => onFileSelect(value.fullPath)}
+                        onClick={() => {
+                            onFileSelect(value.fullPath);
+                            autoScrollRight();
+                        }}
                     >
                         <FileText className="w-4 h-4 mr-2 text-gray-600 flex-shrink-0" />
-                        <span className="truncate text-gray-900" title={name}>
+                        <span className="text-gray-900 whitespace-nowrap" title={name}>
               {name}
             </span>
                     </div>
@@ -58,7 +90,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
                             ) : (
                                 <Folder className="w-4 h-4 mr-2 text-gray-600 flex-shrink-0" />
                             )}
-                            <span className="truncate text-gray-800" title={name}>
+                            <span className="text-gray-800 whitespace-nowrap" title={name}>
                 {name}
               </span>
                         </div>
@@ -76,7 +108,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
     const hasFiles = Object.keys(fileStructure).length > 0;
 
     return (
-        <div className="bg-white rounded-lg shadow-sm border h-full flex flex-col">
+        <div className="bg-white rounded-lg shadow-sm border flex flex-col" style={{ height: 'fit-content' }}>
             {/* Header */}
             <div className="p-4 border-b bg-gray-50 rounded-t-lg">
                 <h3 className="text-lg font-semibold text-gray-900 flex items-center">
@@ -86,7 +118,16 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
             </div>
 
             {/* File Tree */}
-            <div className="flex-1 overflow-auto p-4">
+            <div 
+                ref={fileTreeRef} 
+                className="overflow-auto p-4" 
+                style={{ 
+                    overflowX: 'auto', 
+                    whiteSpace: 'nowrap',
+                    height: `${treeHeight}px`,
+                    maxHeight: '60vh'
+                }}
+            >
                 {!hasFiles ? (
                     <div className="text-center text-gray-500 py-8">
                         <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
@@ -94,7 +135,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
                         <p className="text-sm mt-1">Analyze a repository first</p>
                     </div>
                 ) : (
-                    <div className="space-y-1">
+                    <div ref={contentRef} className="space-y-1" style={{ minWidth: 'max-content' }}>
                         {renderFileTree(fileStructure)}
                     </div>
                 )}

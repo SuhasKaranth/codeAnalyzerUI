@@ -11,11 +11,7 @@ const nextConfig = {
         pagesBufferLength: 2,
     },
 
-    // Development-specific settings
-    ...(process.env.NODE_ENV === 'development' && {
-        // Disable some optimizations that can cause hydration issues in dev
-        swcMinify: false,
-    })
+    // Remove deprecated swcMinify option - it's enabled by default in Next.js 15
 }
 
 module.exports = nextConfig

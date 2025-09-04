@@ -1,11 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { useAnalysis } from '@/hooks/useAnalysis';  // Named import - matches the export
+import { FileTreeNode } from '@/types';
 import FileExplorer from './FileExplorer';
 import HistoryPanel from './HistoryPanel';
 import RepositoryInput from './RepositoryInput';
+import EmailLogin from './EmailLogin';
+import { Github } from 'lucide-react';
+import UserMenu from './UserMenu';
+import { apiService } from '@/services/api';
 
 const CodeAnalyzerDashboard: React.FC = () => {
     const [isClient, setIsClient] = useState(false);
+    const [userEmail, setUserEmail] = useState<string | null>(null);
 
     const {
         repoUrl,
@@ -20,13 +26,66 @@ const CodeAnalyzerDashboard: React.FC = () => {
         explainFile,
         completeAnalysis,
         sessionId,
-        askQuestion
-    } = useAnalysis();
+        askQuestion,
+        explainFileQuestion,
+        clearSession,
+        qaHistory,
 
-    // Ensure we only render on client to avoid hydration issues
+    } = useAnalysis(userEmail || undefined);
+
+    // Ensure we only render on client to avoid hydration issues and check for stored email
     useEffect(() => {
         setIsClient(true);
+        // Check for stored email in localStorage
+        const storedEmail = localStorage.getItem('userEmail');
+        if (storedEmail) {
+            setUserEmail(storedEmail);
+        }
     }, []);
+
+    // Initialize user session when email and sessionId are available
+    useEffect(() => {
+        if (userEmail && sessionId && isClient) {
+            console.log('Starting user session with sessionId:', sessionId, 'for email:', userEmail);
+            apiService.startUserSession(sessionId, userEmail)
+                .then(response => {
+                    console.log('User session started successfully:', response);
+                })
+                .catch(error => {
+                    console.warn('Failed to start user session (backend may not be ready):', error);
+                });
+        }
+    }, [userEmail, sessionId, isClient]);
+
+    // Handle email submission
+    const handleEmailSubmit = (email: string) => {
+        localStorage.setItem('userEmail', email);
+        setUserEmail(email);
+    };
+
+    // Handle logout
+    const handleLogout = () => {
+        localStorage.removeItem('userEmail');
+        clearSession(); // Clear chat session
+        setUserEmail(null);
+    };
+
+    // Handle repository selection from menu
+    const handleRepositorySelect = async (repositoryUrl: string) => {
+        try {
+            // Load repository session and files
+            setRepoUrl(repositoryUrl);
+            
+            // Set repository context using our consistent sessionId
+            if (userEmail && sessionId) {
+                console.log('Setting repository context with sessionId:', sessionId);
+                const sessionResponse = await apiService.continueUserSession(sessionId, userEmail, repositoryUrl);
+                console.log('Continue session response:', sessionResponse);
+            }
+        } catch (error) {
+            console.error('Failed to load repository:', error);
+        }
+    };
 
     if (!isClient) {
         // Return a loading skeleton that matches the final UI structure
@@ -75,28 +134,54 @@ const CodeAnalyzerDashboard: React.FC = () => {
         );
     }
 
-    const handleFileSelect = (filePath: string) => {
-        setSelectedFile(filePath);
+    // Show email login if no email is provided
+    if (!userEmail) {
+        return <EmailLogin onEmailSubmit={handleEmailSubmit} />;
+    }
+
+    const handleFileSelect = (filePath: string | FileTreeNode | { isFile: true; fullPath: string }) => {
+        if (typeof filePath === 'string') {
+            setSelectedFile(filePath);
+        } else if (filePath && typeof filePath === 'object' && 'isFile' in filePath && filePath.isFile === true && 'fullPath' in filePath) {
+            setSelectedFile(typeof filePath.fullPath === 'string' ? filePath.fullPath : null);
+        }
     };
 
     return (
         <div className="min-h-screen bg-gray-50 p-4">
             <div className="max-w-7xl mx-auto">
                 {/* Header */}
-                <div className="text-center mb-8">
-                    <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                        AI Code Analysis Agent
-                    </h1>
-                    <p className="text-gray-600">
-                        Analyze Java repositories with natural language queries
-                    </p>
-                    {/* Current Repository Display */}
-                    {repoUrl && (
-                        <div className="mt-4 flex flex-col items-center space-y-2">
-                            <div className="inline-flex items-center px-3 py-1 bg-blue-50 border border-blue-200 rounded-full text-sm text-blue-700">
-                                <span className="font-medium">Repository:</span>
-                                <span className="ml-2 truncate max-w-md">{repoUrl}</span>
+                <div className="mb-8">
+                    {/* User Menu Header */}
+                    <div className="flex justify-between items-center mb-6">
+                        <UserMenu 
+                            userEmail={userEmail}
+                            onLogout={handleLogout}
+                            onSelectRepository={handleRepositorySelect}
+                        />
+                        {repoUrl && (
+                            <div className="flex items-center space-x-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+                                <Github className="w-4 h-4 text-blue-600" />
+                                <span className="text-sm font-medium text-blue-700">
+                                    {repoUrl.split('/').slice(-2).join('/')}
+                                </span>
                             </div>
+                        )}
+                    </div>
+
+                    {/* Main Title */}
+                    <div className="text-center">
+                        <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                            AI Code Analysis Agent
+                        </h1>
+                        <p className="text-gray-600">
+                            Analyze Java repositories with natural language queries
+                        </p>
+                    </div>
+
+                    {/* Repository Status */}
+                    {repoUrl && (
+                        <div className="mt-4 text-center">
 
                             {/* Debug: Manual Complete Button (remove in production) */}
                             {isAnalyzing && (
@@ -139,7 +224,8 @@ const CodeAnalyzerDashboard: React.FC = () => {
                             onUrlChange={setRepoUrl}
                             onAnalyze={analyzeRepository}
                             onAskQuestion={askQuestion}
-                            sessionId={sessionId}
+                            explainFileQuestion={explainFileQuestion}
+                            qaHistory={qaHistory}
                         />
                     </div>
 

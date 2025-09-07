@@ -26,6 +26,7 @@ const CodeAnalyzerDashboard: React.FC = () => {
         explainFile,
         completeAnalysis,
         sessionId,
+        isInitialized,
         askQuestion,
         explainFileQuestion,
         clearSession,
@@ -43,9 +44,9 @@ const CodeAnalyzerDashboard: React.FC = () => {
         }
     }, []);
 
-    // Initialize user session when email and sessionId are available
+    // Initialize user session when email, sessionId, and initialization are complete
     useEffect(() => {
-        if (userEmail && sessionId && isClient) {
+        if (userEmail && sessionId && isClient && isInitialized) {
             console.log('Starting user session with sessionId:', sessionId, 'for email:', userEmail);
             apiService.startUserSession(sessionId, userEmail)
                 .then(response => {
@@ -55,7 +56,7 @@ const CodeAnalyzerDashboard: React.FC = () => {
                     console.warn('Failed to start user session (backend may not be ready):', error);
                 });
         }
-    }, [userEmail, sessionId, isClient]);
+    }, [userEmail, sessionId, isClient, isInitialized]);
 
     // Handle email submission
     const handleEmailSubmit = (email: string) => {
@@ -76,8 +77,8 @@ const CodeAnalyzerDashboard: React.FC = () => {
             // Load repository session and files
             setRepoUrl(repositoryUrl);
             
-            // Set repository context using our consistent sessionId
-            if (userEmail && sessionId) {
+            // Set repository context using our consistent sessionId (wait for initialization)
+            if (userEmail && sessionId && isInitialized) {
                 console.log('Setting repository context with sessionId:', sessionId);
                 const sessionResponse = await apiService.continueUserSession(sessionId, userEmail, repositoryUrl);
                 console.log('Continue session response:', sessionResponse);

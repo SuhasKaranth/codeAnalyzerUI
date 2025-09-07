@@ -179,12 +179,23 @@ export const apiService = {
             payload.sessionId = sessionId;
         }
         
-        const response = await api.post<ChatResponse>('/chat/message', payload);
+        // Use shorter timeout for analysis requests (1 minute)
+        const response = await api.post<ChatResponse>('/chat/message', payload, {
+            timeout: 60000 // 1 minute timeout
+        });
         return response.data;
     },
 
     // Chat message for queries (hybrid: email + sessionId)
     async sendChatMessage(message: string, userEmail: string, sessionId?: string | null, repositoryUrl?: string): Promise<ChatResponse> {
+        console.log('💬 sendChatMessage called:', {
+            messagePreview: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
+            userEmail,
+            hasSessionId: !!sessionId,
+            hasRepositoryUrl: !!repositoryUrl,
+            timestamp: new Date().toLocaleTimeString()
+        });
+        
         const payload: {
             message: string;
             userEmail: string;
@@ -197,28 +208,53 @@ export const apiService = {
         };
         
         // Include sessionId if provided (critical for context preservation)
-        console.log('API sendChatMessage - sessionId parameter:', sessionId, 'Type:', typeof sessionId);
+        console.log('🆔 API sendChatMessage - sessionId parameter:', sessionId, 'Type:', typeof sessionId);
         if (sessionId) {
             payload.sessionId = sessionId;
-            console.log('Added sessionId to payload:', payload.sessionId);
+            console.log('✅ Added sessionId to payload:', payload.sessionId);
         } else {
-            console.log('No sessionId provided - payload will not include sessionId');
+            console.log('❌ No sessionId provided - payload will not include sessionId');
         }
         
         // Include repository URL if provided (critical for repository filtering)
         if (repositoryUrl) {
             payload.repositoryUrl = repositoryUrl;
             payload.repositoryContext = repositoryUrl; // Additional field for backend
-            console.log('Added repositoryUrl to payload:', payload.repositoryUrl);
-            console.log('Repository context for filtering:', repositoryUrl);
+            console.log('✅ Added repositoryUrl to payload:', payload.repositoryUrl);
+            console.log('🔗 Repository context for filtering:', repositoryUrl);
         } else {
             console.log('❌ WARNING: No repositoryUrl provided - backend may not filter by repository');
         }
         
-        console.log('Full payload being sent to /chat/message:', JSON.stringify(payload, null, 2));
+        console.log('📦 Full payload being sent to /chat/message:', JSON.stringify(payload, null, 2));
         
-        const response = await api.post<ChatResponse>('/chat/message', payload);
-        return response.data;
+        try {
+            console.log('📞 Making chat API call...');
+            const response = await api.post<ChatResponse>('/chat/message', payload);
+            
+            console.log('✅ Chat API response received:', {
+                status: response.status,
+                statusText: response.statusText,
+                hasResponse: !!response.data?.response,
+                responseLength: response.data?.response?.length || 0,
+                responseType: typeof response.data?.response,
+                hasAnswer: !!response.data?.answer,
+                responseKeys: response.data ? Object.keys(response.data) : []
+            });
+            
+            console.log('💬 Full chat response data:', response.data);
+            
+            return response.data;
+        } catch (error) {
+            console.error('❌ sendChatMessage failed:', error);
+            console.log('📊 Chat error details:', {
+                message: error instanceof Error ? error.message : 'Unknown error',
+                status: (error as unknown as {response?: {status?: number}})?.response?.status,
+                statusText: (error as unknown as {response?: {statusText?: string}})?.response?.statusText,
+                responseData: (error as unknown as {response?: {data?: unknown}})?.response?.data
+            });
+            throw error;
+        }
     },
 
     // Get chat session context
@@ -245,23 +281,46 @@ export const apiService = {
     },
 
     async getRepositoryFiles(repoUrl?: string): Promise<string[]> {
+        console.log('🌐 getRepositoryFiles called with repoUrl:', repoUrl);
+        
         try {
             let url = '/repository/files';
             if (repoUrl) {
                 url += `?url=${encodeURIComponent(repoUrl)}`;
             }
-
+            
+            console.log('📞 Making API call to:', url);
             const response = await api.get(url);
-
+            
+            console.log('✅ API response received:', {
+                status: response.status,
+                statusText: response.statusText,
+                dataType: typeof response.data,
+                hasJavaFiles: !!(response.data && response.data.javaFiles),
+                javaFilesLength: response.data?.javaFiles?.length || 0,
+                responseKeys: response.data ? Object.keys(response.data) : []
+            });
+            
             // Based on your API response structure, extract the javaFiles array
             if (response.data && response.data.javaFiles) {
+                console.log('📄 Returning javaFiles array with', response.data.javaFiles.length, 'files');
+                console.log('📋 First few files:', response.data.javaFiles.slice(0, 3));
                 return response.data.javaFiles;
             }
 
             // Fallback if response structure is different
+            console.log('⚠️  No javaFiles property found, returning raw data');
+            console.log('📊 Raw response data:', response.data);
             return response.data || [];
+            
         } catch (error) {
-            console.error('Error getting repository files:', error);
+            console.error('❌ getRepositoryFiles failed:', error);
+            console.log('📊 Error details:', {
+                message: error instanceof Error ? error.message : 'Unknown error',
+                status: (error as unknown as {response?: {status?: number}})?.response?.status,
+                statusText: (error as unknown as {response?: {statusText?: string}})?.response?.statusText,
+                responseData: (error as unknown as {response?: {data?: unknown}})?.response?.data
+            });
             throw new Error('Could not retrieve repository files from API');
         }
     },

@@ -10,9 +10,26 @@ export const useAnalysis = (userEmail?: string) => {
     const [analysisHistory, setAnalysisHistory] = useState<HistoryEntry[]>([]);
     const [currentStatus, setCurrentStatus] = useState('idle');
     const [fileStructure, setFileStructure] = useState<FileTreeNode>({});
+    
+    // Log file structure changes
+    useEffect(() => {
+        const keys = Object.keys(fileStructure);
+        console.log('📁 FileStructure state changed:', {
+            keyCount: keys.length,
+            keys: keys.slice(0, 5),
+            hasContent: keys.length > 0,
+            timestamp: new Date().toLocaleTimeString()
+        });
+        
+        if (keys.length > 0) {
+            console.log('🎉 File structure successfully populated!');
+            console.log('📂 Structure preview:', JSON.stringify(fileStructure, null, 2).substring(0, 200) + '...');
+        }
+    }, [fileStructure]);
     const [selectedFile, setSelectedFile] = useState<string | null>(null);
-    // Generate sessionId immediately when hook is created - ensures consistent session ID
-    const [sessionId, setSessionId] = useState<string>(() => generateSessionId());
+    // Two-phase initialization: first try to restore, then generate if needed
+    const [sessionId, setSessionId] = useState<string | null>(null);
+    const [isInitialized, setIsInitialized] = useState(false);
     const [explainFileQuestion, setExplainFileQuestion] = useState<string | null>(null);
     const [qaHistory, setQaHistory] = useState<QAEntry[]>([]);
     const [sessionRestored, setSessionRestored] = useState(false);
@@ -58,6 +75,13 @@ export const useAnalysis = (userEmail?: string) => {
 
     // Add history entry helper
     const addHistoryEntry = useCallback((action: string, status: HistoryEntry['status'], details = '') => {
+        console.log('📝 addHistoryEntry called:', {
+            action,
+            status,
+            details: details.substring(0, 50) + (details.length > 50 ? '...' : ''),
+            timestamp: new Date().toLocaleTimeString()
+        });
+        
         const entry: HistoryEntry = {
             id: Date.now(),
             timestamp: new Date().toLocaleTimeString('en-US', {
@@ -70,26 +94,69 @@ export const useAnalysis = (userEmail?: string) => {
             status,
             details: truncateMessage(details)
         };
-        setAnalysisHistory(prev => [entry, ...prev]);
+        
+        console.log('📋 Created history entry:', {
+            id: entry.id,
+            action: entry.action,
+            status: entry.status,
+            timestamp: entry.timestamp,
+            detailsLength: entry.details.length
+        });
+        
+        setAnalysisHistory(prev => {
+            console.log('📊 Adding to history array - current length:', prev.length);
+            const newHistory = [entry, ...prev];
+            console.log('📊 New history array length:', newHistory.length);
+            console.log('📋 History array preview (first 3):', newHistory.slice(0, 3).map(h => ({
+                action: h.action,
+                status: h.status,
+                timestamp: h.timestamp
+            })));
+            return newHistory;
+        });
+        
+        console.log('✅ History entry added successfully');
     }, [truncateMessage]);
 
     // Load session from cookies on mount - only once
     useEffect(() => {
+        console.log('🔄 Session restoration useEffect triggered');
+        console.log('📋 Conditions - userEmail:', !!userEmail, 'sessionRestored:', sessionRestored);
+        
         if (userEmail && !sessionRestored) {
+            console.log('🍪 Attempting to get stored session...');
             const storedSession = SessionStorage.getSession();
+            console.log('📦 Stored session data:', {
+                found: !!storedSession,
+                userEmailMatch: storedSession?.userEmail === userEmail,
+                hasFileStructure: storedSession ? Object.keys(storedSession.fileStructure || {}).length : 0,
+                currentStatus: storedSession?.currentStatus,
+                repoUrl: storedSession?.repoUrl
+            });
+            
             if (storedSession && storedSession.userEmail === userEmail) {
-                // Restore all session data
+                console.log('✅ Valid stored session found, restoring...');
+                
+                // Restore all session data including the existing sessionId
+                console.log('📝 Restoring repoUrl:', storedSession.repoUrl);
                 setRepoUrl(storedSession.repoUrl);
-                setSessionId(storedSession.sessionId);
+                
+                console.log('🆔 Restoring sessionId:', storedSession.sessionId);
+                setSessionId(storedSession.sessionId); // Restore existing sessionId from storage
+                
+                console.log('📁 Restoring file structure with', Object.keys(storedSession.fileStructure || {}).length, 'keys');
                 setFileStructure(storedSession.fileStructure);
                 
                 // If we have file structure, status should be completed
-                // Don't restore 'analyzing' status as that would be misleading
-                const restoredStatus = storedSession.currentStatus === 'analyzing' && 
+                // Don't restore 'analyzing' or 'error' status if analysis actually succeeded
+                const restoredStatus = (storedSession.currentStatus === 'analyzing' || storedSession.currentStatus === 'error') && 
                                      Object.keys(storedSession.fileStructure || {}).length > 0 
                                      ? 'completed' 
                                      : storedSession.currentStatus;
+                console.log('📊 Status restoration - stored:', storedSession.currentStatus, 'restored:', restoredStatus);
                 setCurrentStatus(restoredStatus);
+                
+                console.log('💬 Restoring Q&A history with', (storedSession.qaHistory || []).length, 'entries');
                 setQaHistory(storedSession.qaHistory || []);
                 
                 // Mark session as restored to prevent future restorations
@@ -98,13 +165,17 @@ export const useAnalysis = (userEmail?: string) => {
                 // Add history entry to indicate session restored
                 addHistoryEntry('Session Restored', 'completed', `Restored session for ${storedSession.repoUrl} with ${(storedSession.qaHistory || []).length} Q&A entries`);
                 
-                console.log('Session restored from cookie:', storedSession);
-                console.log('Restored session ID:', storedSession.sessionId, 'Type:', typeof storedSession.sessionId);
+                console.log('🎉 Session restoration completed successfully');
+                console.log('📦 Session details:', {
+                    sessionId: storedSession.sessionId,
+                    fileStructureKeys: Object.keys(storedSession.fileStructure || {}).length,
+                    qaHistoryLength: (storedSession.qaHistory || []).length
+                });
                 
-                // Inform backend about session continuation - use current sessionId
+                // Inform backend about session continuation - use restored sessionId
                 if (storedSession.repoUrl) {
-                    // Use the current sessionId from state (generated on app start)
-                    apiService.continueUserSession(sessionId, userEmail, storedSession.repoUrl)
+                    // Use the restored sessionId directly from stored session (not state which hasn't updated yet)
+                    apiService.continueUserSession(storedSession.sessionId, userEmail, storedSession.repoUrl)
                         .then(response => {
                             console.log('Backend session continuation response:', response);
                             console.log('Using consistent sessionId:', sessionId);
@@ -114,9 +185,13 @@ export const useAnalysis = (userEmail?: string) => {
                         });
                 }
             } else {
-                // No stored session, mark as "restored" to prevent future checks
+                // No stored session - generate new sessionId for fresh start
+                setSessionId(generateSessionId());
                 setSessionRestored(true);
             }
+            
+            // Mark initialization as complete after restoration attempt
+            setIsInitialized(true);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [userEmail]); // Only depend on userEmail - intentionally excluding other deps to prevent infinite loops
@@ -144,60 +219,102 @@ export const useAnalysis = (userEmail?: string) => {
 
     // Complete analysis and load files function
     const completeAnalysis = useCallback(async () => {
-        console.log('completeAnalysis called, repoUrl:', repoUrl, 'sessionId:', sessionId);
+        console.log('🚀 completeAnalysis called');
+        console.log('📋 Initial state - repoUrl:', repoUrl, 'sessionId:', sessionId, 'userEmail:', userEmail);
+        console.log('📊 Current fileStructure keys:', Object.keys(fileStructure).length);
+        
         setIsAnalyzing(false);
         setCurrentStatus('completed');
+        console.log('✅ Status set to completed, isAnalyzing set to false');
+        
         addHistoryEntry('Analysis Complete', 'completed', 'Analysis manually completed - loading files...');
+        console.log('📝 Added "Analysis Complete" history entry');
 
         if (repoUrl) {
+            console.log('🌐 Repository URL available, attempting to load files...');
             try {
+                console.log('📞 Calling apiService.getRepositoryFiles with:', repoUrl);
                 // Call the API with the repository URL
                 const files = await apiService.getRepositoryFiles(repoUrl);
-                console.log('Files loaded:', files);
+                console.log('✅ Primary API call succeeded! Files loaded:', files);
+                console.log('📊 Files array length:', files?.length || 0);
+                console.log('📄 First few files:', files?.slice(0, 3));
+                
                 const organizedFiles = organizeFileStructure(files);
+                console.log('🗂️  Files organized into structure, keys:', Object.keys(organizedFiles));
+                
                 setFileStructure(organizedFiles);
+                console.log('💾 File structure state updated');
+                
                 addHistoryEntry('File Structure', 'loaded', `${files.length} Java files loaded successfully`);
+                console.log('📝 Added "File Structure loaded" history entry with status: loaded');
                 
                 // Update session storage with file structure
                 storeSessionData();
+                console.log('💾 Session data stored');
+                
             } catch (error) {
-                console.error('Error loading files:', error);
+                console.error('❌ Primary API call failed:', error);
+                console.log('📊 Error details:', {
+                    message: error instanceof Error ? error.message : 'Unknown error',
+                    type: typeof error,
+                    stack: error instanceof Error ? error.stack : undefined
+                });
+                
                 addHistoryEntry('File Structure', 'error', 'Could not load file structure from API');
+                console.log('📝 Added "File Structure error" history entry with status: error');
 
                 // Fallback: Try using chat API if we have a session
-                if (sessionId) {
+                console.log('🔄 Checking fallback conditions - sessionId:', !!sessionId, 'userEmail:', !!userEmail);
+                if (sessionId && userEmail) {
+                    console.log('🔄 Attempting chat API fallback...');
                     try {
-                        const response = await apiService.sendChatMessage('List all the Java files in the repository', sessionId);
+                        console.log('📞 Calling sendChatMessage with:', {
+                            message: 'List all the Java files in the repository',
+                            userEmail,
+                            sessionId: sessionId.substring(0, 10) + '...',
+                            repoUrl
+                        });
+                        
+                        const response = await apiService.sendChatMessage('List all the Java files in the repository', userEmail, sessionId, repoUrl);
+                        console.log('✅ Chat API fallback succeeded!');
+                        console.log('💬 Chat response structure:', {
+                            hasResponse: !!response?.response,
+                            responseLength: response?.response?.length || 0,
+                            responseType: typeof response?.response,
+                            fullResponse: response
+                        });
+                        
                         addHistoryEntry('File Structure', 'completed', 'Requested file list from chat API as fallback');
-                        console.log('Chat response for file list:', response);
+                        console.log('📝 Added "Chat API fallback completed" history entry with status: completed');
+                        
+                        console.log('❓ Note: Chat fallback "succeeded" but did NOT update fileStructure state');
+                        console.log('📊 Current fileStructure keys after fallback:', Object.keys(fileStructure).length);
+                        
                     } catch (chatError) {
-                        console.error('Chat API also failed:', chatError);
+                        console.error('❌ Chat API fallback also failed:', chatError);
+                        console.log('📊 Chat error details:', {
+                            message: chatError instanceof Error ? chatError.message : 'Unknown error',
+                            type: typeof chatError
+                        });
+                        
                         addHistoryEntry('File Structure', 'error', 'Could not load file structure via any method');
+                        console.log('📝 Added "All methods failed" history entry with status: error');
                     }
+                } else {
+                    console.log('❌ Fallback conditions not met - sessionId:', !!sessionId, 'userEmail:', !!userEmail);
                 }
             }
         } else {
+            console.log('❌ No repository URL available');
             addHistoryEntry('File Structure', 'error', 'No repository URL available');
+            console.log('📝 Added "No repo URL" history entry with status: error');
         }
-    }, [addHistoryEntry, organizeFileStructure, repoUrl, sessionId, storeSessionData]);
+        
+        console.log('🏁 completeAnalysis method finished');
+        console.log('📊 Final fileStructure keys:', Object.keys(fileStructure).length);
+    }, [addHistoryEntry, organizeFileStructure, repoUrl, sessionId, storeSessionData, userEmail, fileStructure]);
 
-    // Load file structure
-    const loadFileStructure = useCallback(async () => {
-        if (!sessionId) return;
-
-        try {
-            const files = await apiService.getRepositoryFiles();
-            const organizedFiles = organizeFileStructure(files);
-            setFileStructure(organizedFiles);
-            addHistoryEntry('File Structure', 'loaded', `${files.length} files loaded`);
-            
-            // Update session storage with file structure
-            storeSessionData();
-        } catch (error) {
-            addHistoryEntry('File Structure', 'error', 'Failed to load file structure');
-            console.error('Error loading file structure:', error);
-        }
-    }, [sessionId, organizeFileStructure, addHistoryEntry, storeSessionData]);
 
     // Parse analysis response and update UI accordingly - enhanced for non-blocking responses
     const parseAnalysisResponse = useCallback((response: string) => {
@@ -334,8 +451,8 @@ export const useAnalysis = (userEmail?: string) => {
 
     // Manual analysis status check - can be triggered by user action
     const checkAnalysisStatus = useCallback(async () => {
-        if (!userEmail || !sessionId) {
-            console.log('Cannot check status - missing userEmail or sessionId');
+        if (!userEmail || !sessionId || !isInitialized) {
+            console.log('Cannot check status - missing userEmail, sessionId, or not initialized');
             return;
         }
 
@@ -366,7 +483,7 @@ export const useAnalysis = (userEmail?: string) => {
             addHistoryEntry('Status Check', 'error', 'Status check failed');
             throw error;
         }
-    }, [userEmail, sessionId, repoUrl, parseAnalysisResponse, addHistoryEntry]);
+    }, [userEmail, sessionId, repoUrl, isInitialized, parseAnalysisResponse, addHistoryEntry]);
 
     // Analyze repository using chat API with non-blocking response handling
     const analyzeRepository = useCallback(async () => {
@@ -377,6 +494,11 @@ export const useAnalysis = (userEmail?: string) => {
 
         if (!userEmail) {
             addHistoryEntry('Analyze Repository', 'error', 'User email is required');
+            return;
+        }
+        
+        if (!sessionId || !isInitialized) {
+            addHistoryEntry('Analyze Repository', 'error', 'Session not initialized yet');
             return;
         }
 
@@ -417,7 +539,7 @@ export const useAnalysis = (userEmail?: string) => {
             setCurrentStatus('error');
             console.error('Repository analysis error:', error);
         }
-    }, [repoUrl, userEmail, sessionId, addHistoryEntry, parseAnalysisResponse, storeSessionData]);
+    }, [repoUrl, userEmail, sessionId, isInitialized, addHistoryEntry, parseAnalysisResponse, storeSessionData]);
 
     // Explain selected file using chat API - now triggers question in UI
     const explainFile = useCallback(async () => {
@@ -441,7 +563,7 @@ export const useAnalysis = (userEmail?: string) => {
 
     // Ensure repository context is set before asking questions
     const ensureRepositoryContext = useCallback(async () => {
-        if (userEmail && repoUrl && sessionId) {
+        if (userEmail && repoUrl && sessionId && isInitialized) {
             console.log('Setting repository context via session continuation with sessionId:', sessionId);
             try {
                 const response = await apiService.continueUserSession(sessionId, userEmail, repoUrl);
@@ -450,12 +572,16 @@ export const useAnalysis = (userEmail?: string) => {
                 console.log('Could not set repository context:', error);
             }
         }
-    }, [userEmail, repoUrl, sessionId]);
+    }, [userEmail, repoUrl, sessionId, isInitialized]);
 
     // Ask question using chat API - Don't add to activity history
     const askQuestion = useCallback(async (question: string) => {
         if (!userEmail) {
             throw new Error('No user email available');
+        }
+        
+        if (!sessionId || !isInitialized) {
+            throw new Error('Session not initialized yet');
         }
 
         // Ensure repository context is set before asking
@@ -535,7 +661,7 @@ export const useAnalysis = (userEmail?: string) => {
                 throw new Error(errorMessage);
             }
         }
-    }, [userEmail, sessionId, repoUrl, ensureRepositoryContext]);
+    }, [userEmail, sessionId, repoUrl, isInitialized, ensureRepositoryContext]);
 
     // REMOVED: Polling logic that was overwhelming backend with status requests
     // The backend now handles analysis asynchronously without requiring continuous status checks
@@ -549,6 +675,7 @@ export const useAnalysis = (userEmail?: string) => {
         fileStructure,
         selectedFile,
         sessionId,
+        isInitialized,
         explainFileQuestion,
         qaHistory,
 
@@ -557,7 +684,6 @@ export const useAnalysis = (userEmail?: string) => {
         setSelectedFile,
         analyzeRepository,
         explainFile,
-        loadFileStructure,
         completeAnalysis,
         askQuestion,
         clearSession,
